@@ -1,0 +1,56 @@
+name: Auto Build Protected EXE
+
+on:
+  workflow_dispatch:
+    inputs:
+      folder_name:
+        description: 'your folder name'
+        required: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Tools
+        run: |
+          pip install pyinstaller pyarmor
+
+      - name: Discover and Build
+        shell: pwsh
+        run: |
+          $dir = "${{ github.event.inputs.folder_name }}"
+          cd $dir
+
+          $py_file = Get-ChildItem -Filter *.py | Where-Object { $_.Name -eq "main.py" }
+          if (-not $py_file) {
+              $py_file = Get-ChildItem -Filter *.py | Select-Object -First 1
+          }
+
+          if (-not $py_file) {
+              Write-Error "No .py file found!"
+              exit 1
+          }
+
+          if (Test-Path "requirements.txt") {
+              pip install -r requirements.txt
+          }
+
+          pyarmor gen "$($py_file.Name)"
+
+          $icon_param = ""
+          $icon_file = Get-ChildItem -Filter *.ico | Select-Object -First 1
+          if ($icon_file) {
+              $icon_param = "--icon=$($icon_file.Name)"
+          }
+
+          pyinstaller --onefile $icon_param "$($py_file.Name)"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.inputs.folder_name }}-exe
+          path: ${{ github.event.inputs.folder_name }}/dist/*.exe
