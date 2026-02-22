@@ -10,6 +10,7 @@ jobs:
     steps:
       - name: Install Tailscale
         run: |
+          pip install requests
           $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.92.3-amd64.msi"
           $installerPath = "$env:TEMP\tailscale.msi"
           Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
