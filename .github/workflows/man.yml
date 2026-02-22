@@ -1,0 +1,75 @@
+name: Avica OCR Automation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run-ocr:
+    runs-on: windows-latest
+
+    steps:
+      - name: Install Tailscale
+        run: |
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.92.3-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Remove-Item $installerPath -Force
+
+      - name: Establish Tailscale Connection
+        run: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTHKEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
+          $tsIP = $null
+          $retries = 0
+          while (-not $tsIP -and $retries -lt 10) {
+              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+              Start-Sleep -Seconds 5
+              $retries++
+          }
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+
+      - name: Download and Start Avica
+        run: |
+          curl.exe -s -L -o AvicaLite.exe https://download.avica.com/AvicaLite_v8.0.8.9.exe
+          Start-Process -FilePath ".\AvicaLite.exe"
+
+      - name: Capture and Process OCR
+        id: ocr_engine
+        shell: powershell
+        run: |
+          Start-Sleep -s 25
+          $process = Get-Process -Name "AvicaLite" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($process) {
+              Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+              $Screen = [System.Windows.Forms.Screen]::PrimaryScreen
+              $Bitmap = New-Object System.Drawing.Bitmap($Screen.Bounds.Width, $Screen.Bounds.Height)
+              $Graphics = [System.Drawing.Graphics]::FromImage($Bitmap)
+              $Graphics.CopyFromScreen($Screen.Bounds.X, $Screen.Bounds.Y, 0, 0, $Bitmap.Size)
+              $Bitmap.Save("$env:USERPROFILE\Desktop\pic.png", [System.Drawing.Imaging.ImageFormat]::Png)
+          }
+
+          curl.exe -s -L -o screenshot.py https://gitlab.com/MR.English2008/avica/-/raw/main/OCR_Avica.py
+          
+          $env:PYTHONWARNINGS="ignore"
+          cmd /c "python screenshot.py > nul 2>&1"
+          
+
+      - name: Upload screenshot as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-screenshot
+          path: ${{ env.USERPROFILE }}\Desktop\pic.png
+    
+    - name: Use Extracted Variables
+        run: |
+          Write-Host "Thanks to MR.English2008 for this perfect work"
+          Write-Host "follow for more in my telegram channel"
+          Write-Host "https://t.me/ME2008_RDP"
+          Write-Host ""
+          Write-Host "`n=== AVICA ACCESS ==="
+          Write-Host "Avica ID:   ${{ steps.ocr_engine.outputs.id }}"
+          Write-Host "Avica Pass: ${{ steps.ocr_engine.outputs.pass }}"
+          Write-Host "==================`n"
+          
+          Write-Host "Runner is now keeping the connection alive..."
+          Start-Sleep -Seconds 21600
