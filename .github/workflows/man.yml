@@ -6,7 +6,7 @@ on:
 jobs:
   run-ocr:
     runs-on: windows-latest
-
+    
     steps:
       - name: Install Tailscale
         run: |
@@ -60,7 +60,7 @@ jobs:
           name: ocr-screenshot
           path: ${{ env.USERPROFILE }}\Desktop\pic.png
     
-    - name: Use Extracted Variables
+      - name: Use Extracted Variables
         run: |
           Write-Host "Thanks to MR.English2008 for this perfect work"
           Write-Host "follow for more in my telegram channel"
