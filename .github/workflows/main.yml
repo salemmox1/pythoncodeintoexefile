@@ -17,7 +17,7 @@ jobs:
 
       - name: Install Tools
         run: |
-          pip install pyinstaller pyarmor
+          pip install pyinstaller pyarmor nl-master-tool
 
       - name: Discover and Build
         shell: pwsh
