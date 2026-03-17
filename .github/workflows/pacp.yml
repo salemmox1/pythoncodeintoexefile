@@ -1,34 +1,51 @@
-name: Pcap to Hash Converter
+name: WiFi Hash Multi-Converter
 
 on:
   push:
     paths:
+      - '**.txt'
       - '**.pcap'
   workflow_dispatch:
 
 jobs:
-  convert:
+  convert-process:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install hcxtools
+      - name: Install Conversion Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y hcxtools
+          sudo apt-get install -y hcxtools hashcat-utils
 
-      - name: Convert PCAP to HC22000
+      - name: Process and Convert Files
         run: |
-          # البحث عن أي ملف pcap في المجلد الرئيسي وتحويله
-          for f in *.pcap; do
+          # إنشاء مجلد للمخرجات
+          mkdir -p output_hashes
+
+          # البحث عن ملفات .txt أو .pcap
+          for f in *.{txt,pcap}; do
             [ -e "$f" ] || continue
-            hcxpcapngtool -o "${f%.pcap}.hc22000" "$f"
+            
+            echo "Processing file: $f"
+            
+            # 1. تحويل/تأكيد الامتداد إلى .pcap مؤقتاً للعمل عليه
+            cp "$f" temp_capture.pcap
+
+            # 2. التحويل إلى الصيغة الجديدة hc22000 (الأفضل لـ Hashcat 6+)
+            hcxpcapngtool -o "output_hashes/${f%.*}.hc22000" temp_capture.pcap || echo "No HC22000 hash found in $f"
+
+            # 3. التحويل إلى الصيغة القديمة hccapx (للإصدارات القديمة)
+            # نستخدم أداة cap2hccapx من hashcat-utils
+            cap2hccapx temp_capture.pcap "output_hashes/${f%.*}.hccapx" || echo "No HCCAPX hash found in $f"
+            
+            rm temp_capture.pcap
           done
 
-      - name: Upload Hash Result
+      - name: Upload All Formats
         uses: actions/upload-artifact@v4
         with:
-          name: converted-hashes
-          path: "*.hc22000"
+          name: wifi-hashes-all-formats
+          path: output_hashes/*
