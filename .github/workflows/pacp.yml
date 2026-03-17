@@ -15,37 +15,29 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install Conversion Tools
+      - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y hcxtools hashcat-utils
+          sudo apt-get install -y hcxtools libcurl4-openssl-dev libssl-dev zlib1g-dev
 
       - name: Process and Convert Files
         run: |
-          # إنشاء مجلد للمخرجات
           mkdir -p output_hashes
-
-          # البحث عن ملفات .txt أو .pcap
-          for f in *.{txt,pcap}; do
-            [ -e "$f" ] || continue
-            
-            echo "Processing file: $f"
-            
-            # 1. تحويل/تأكيد الامتداد إلى .pcap مؤقتاً للعمل عليه
-            cp "$f" temp_capture.pcap
-
-            # 2. التحويل إلى الصيغة الجديدة hc22000 (الأفضل لـ Hashcat 6+)
-            hcxpcapngtool -o "output_hashes/${f%.*}.hc22000" temp_capture.pcap || echo "No HC22000 hash found in $f"
-
-            # 3. التحويل إلى الصيغة القديمة hccapx (للإصدارات القديمة)
-            # نستخدم أداة cap2hccapx من hashcat-utils
-            cap2hccapx temp_capture.pcap "output_hashes/${f%.*}.hccapx" || echo "No HCCAPX hash found in $f"
-            
-            rm temp_capture.pcap
+          
+          # البحث عن الملفات وتحويلها
+          for f in *; do
+            # التأكد من أن الملف ينتهي بـ .txt أو .pcap
+            if [[ "$f" == *.txt ]] || [[ "$f" == *.pcap ]]; then
+              echo "Processing: $f"
+              
+              # تحويل الملف إلى hc22000 (الصيغة الأساسية والحديثة)
+              # هذه الأداة موجودة ضمن hcxtools التي قمنا بتثبيتها
+              hcxpcapngtool -o "output_hashes/${f%.*}.hc22000" "$f" || echo "Failed to extract hash from $f"
+            fi
           done
 
-      - name: Upload All Formats
+      - name: Upload Results
         uses: actions/upload-artifact@v4
         with:
-          name: wifi-hashes-all-formats
-          path: output_hashes/*
+          name: wifi-hashes
+          path: output_hashes/
