@@ -1,0 +1,34 @@
+name: Pcap to Hash Converter
+
+on:
+  push:
+    paths:
+      - '**.pcap'
+  workflow_dispatch:
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install hcxtools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y hcxtools
+
+      - name: Convert PCAP to HC22000
+        run: |
+          # البحث عن أي ملف pcap في المجلد الرئيسي وتحويله
+          for f in *.pcap; do
+            [ -e "$f" ] || continue
+            hcxpcapngtool -o "${f%.pcap}.hc22000" "$f"
+          done
+
+      - name: Upload Hash Result
+        uses: actions/upload-artifact@v4
+        with:
+          name: converted-hashes
+          path: "*.hc22000"
