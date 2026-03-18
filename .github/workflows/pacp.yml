@@ -48,21 +48,22 @@ jobs:
 
       - name: 1. Setup Network Bridge & Dependencies
         run: |
-          # Kill any apt locks and update
           sudo rm -rf /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock
           sudo apt-get update -y
           
-          # Install dependencies with retry logic
+          # تم حذف tunctl وإضافة qemu-system-gui لضمان وجود كل المكتبات
           sudo apt-get install -y --no-install-recommends \
             qemu-system-x86 ovmf novnc websockify wget curl \
-            unzip p7zip-full unrar-free tar python3-pip bridge-utils tunctl netcat-openbsd \
+            unzip p7zip-full unrar-free tar python3-pip bridge-utils netcat-openbsd \
             jq tigervnc-viewer wmctrl internetarchive genisoimage openssh-server autossh ufw
           
           # Bridge Logic
           sudo brctl addbr br0
           sudo ip addr add 192.168.1.100/24 dev br0
           sudo ip link set br0 up
-          sudo tunctl -t tap0
+          
+          # إنشاء TAP باستخدام أمر ip بدلاً من tunctl المتوفى
+          sudo ip tuntap add dev tap0 mode tap
           sudo brctl addif br0 tap0
           sudo ip link set tap0 up
           
