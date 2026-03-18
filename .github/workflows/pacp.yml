@@ -39,7 +39,8 @@ jobs:
   run-vm:
     runs-on: ubuntu-latest
     env:
-      FINAL_SOURCE_URL: "https://www.mediafire.com/file/a4qyactev4kzc0q/mint.7z/" # رابط افتراضي
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      FINAL_SOURCE_URL: "https://www.mediafire.com/file/a4qyactev4kzc0q/mint.7z/"
       DISK: ${{ github.event.inputs.disk }}
     steps:
       - name: Checkout
@@ -47,41 +48,46 @@ jobs:
 
       - name: 1. Setup Network Bridge & Dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq qemu-system-x86 ovmf novnc websockify wget curl \
+          # Kill any apt locks and update
+          sudo rm -rf /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock
+          sudo apt-get update -y
+          
+          # Install dependencies with retry logic
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 ovmf novnc websockify wget curl \
             unzip p7zip-full unrar-free tar python3-pip bridge-utils tunctl netcat-openbsd \
-            jq tigervnc-viewer wmctrl internetarchive genisoimage openssh-server autossh ufw > /dev/null 2>&1
+            jq tigervnc-viewer wmctrl internetarchive genisoimage openssh-server autossh ufw
           
           # Bridge Logic
           sudo brctl addbr br0
           sudo ip addr add 192.168.1.100/24 dev br0
           sudo ip link set br0 up
-          sudo tunctl -t tap0 > /dev/null 2>&1
+          sudo tunctl -t tap0
           sudo brctl addif br0 tap0
           sudo ip link set tap0 up
           
           # Firewall Setup
-          sudo ufw allow 5900/tcp > /dev/null 2>&1
-          sudo ufw allow 3389/tcp > /dev/null 2>&1
-          sudo ufw allow 4000/tcp > /dev/null 2>&1
-          sudo ufw --force enable > /dev/null 2>&1 || true
+          sudo ufw allow 5900/tcp
+          sudo ufw allow 3389/tcp
+          sudo ufw allow 4000/tcp
+          sudo ufw --force enable || true
 
       - name: 2. Setup Connection Method
         run: |
           METHOD="${{ github.event.inputs.connection_method }}"
           if [ "$METHOD" = "tailscale" ]; then
-            curl -fsSL https://tailscale.com/install.sh | sudo sh > /dev/null 2>&1
+            curl -fsSL https://tailscale.com/install.sh | sudo sh
             sudo tailscale up --authkey "${{ secrets.TAILSCALE_AUTHKEY }}" --hostname "gh-vm-${{ github.run_id }}" --accept-routes --accept-dns=false
             echo "CONNECTION_IP=$(sudo tailscale ip -4 | head -n1)" >> $GITHUB_ENV
             echo "CONNECTION_TYPE=Tailscale" >> $GITHUB_ENV
           elif [ "$METHOD" = "ngrok" ]; then
-            wget -q -O ngrok.zip https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.zip
-            unzip -q ngrok.zip && sudo mv ngrok /usr/local/bin/
+            wget -q https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.zip
+            unzip -o ngrok-v3-stable-linux-amd64.zip && sudo mv ngrok /usr/local/bin/
             ngrok config add-authtoken "${{ secrets.NGROK_AUTH }}"
             echo "CONNECTION_TYPE=Ngrok" >> $GITHUB_ENV
           elif [ "$METHOD" = "bore" ]; then
-            cargo install bore-cli > /dev/null 2>&1
-            echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+            curl -L https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz | tar zx
+            sudo mv bore /usr/local/bin/
             echo "CONNECTION_TYPE=Bore" >> $GITHUB_ENV
           fi
 
@@ -93,14 +99,14 @@ jobs:
           FILE_PATH="$TEMP_PATH/source_file"
           sudo mkdir -p "$TEMP_PATH"
           
-          git clone https://github.com/stck-lzm/badown ~/badown > /dev/null 2>&1
+          git clone https://github.com/stck-lzm/badown ~/badown
           chmod +x ~/badown/badown
           
           if [[ "$SRC" == *"mediafire.com"* || "$SRC" == *"mega.nz"* ]]; then
             cd ~/badown
             sudo ./badown "$SRC" > /tmp/badown.log 2>&1 &
             pid=$!
-            while kill -0 $pid 2>/dev/null; do sleep 10; echo "Downloading..."; done
+            while kill -0 $pid 2>/dev/null; do sleep 15; echo "Downloading..."; done
             wait $pid
             sudo mv $(ls -t | head -n1) "$FILE_PATH"
           fi
@@ -111,8 +117,8 @@ jobs:
             sudo qemu-img create -f qcow2 "/mnt/${VM}.qcow2" "${DISK}G"
           else
             cd "$TEMP_PATH"
-            if [[ "$EXT" == *"7z"* ]]; then sudo 7z x -y "$FILE_PATH" > /dev/null; fi
-            FOUND=$(find "$TEMP_PATH" -type f -iname "*.qcow2" -o -iname "*.img" | head -n 1)
+            if [[ "$EXT" == *"7z"* ]]; then sudo 7z x -y "$FILE_PATH"; fi
+            FOUND=$(find "$TEMP_PATH" -type f \( -iname "*.qcow2" -o -iname "*.img" \) | head -n 1)
             sudo mv "$FOUND" "/mnt/${VM}.qcow2"
           fi
 
@@ -127,45 +133,33 @@ jobs:
             -netdev tap,id=net0,ifname=tap0,script=no,downscript=no \
             -device virtio-net-pci,netdev=net0 -device usb-ehci,id=ehci -device usb-tablet,bus=ehci.0 &
           
-          while ! nc -z localhost 4444; do sleep 1; done
+          while ! nc -z localhost 4444; do sleep 2; done
           echo "change vnc password $VNC_PASS" | nc -q 1 localhost 4444
 
       - name: 5. Expose Selected Port with Tunnel
-        if: ${{ github.event.inputs.connection_method == 'ngrok' || github.event.inputs.connection_method == 'bore' }}
+        if: always()
         run: |
           METHOD="${{ github.event.inputs.connection_method }}"
           PROGRAM="${{ github.event.inputs.connection_program }}"
-          
           PORT=5900
           [ "$PROGRAM" = "RDP" ] && PORT=3389
           [ "$PROGRAM" = "NoMachine" ] && PORT=4000
           
           if [ "$METHOD" = "ngrok" ]; then
-            nohup ngrok tcp $PORT --region=eu > ngrok_log.log 2>&1 &
-            sleep 10
+            nohup ngrok tcp $PORT --region=eu > /dev/null 2>&1 &
+            sleep 15
             TUNNEL_URL=$(curl --silent http://127.0.0.1:4040/api/tunnels | jq -r ".tunnels[0].public_url")
             echo "CONNECTION_IP=$TUNNEL_URL" >> $GITHUB_ENV
           elif [ "$METHOD" = "bore" ]; then
-            nohup bore local $PORT --to bore.pub > bore_log.log 2>&1 &
-            sleep 5
-            TUNNEL_IP=$(grep -Eo 'bore.pub:[0-9]+' bore_log.log | tail -n 1)
+            nohup bore local $PORT --to bore.pub > /tmp/bore.log 2>&1 &
+            sleep 10
+            TUNNEL_IP=$(grep -Eo 'bore.pub:[0-9]+' /tmp/bore.log | tail -n 1)
             echo "CONNECTION_IP=$TUNNEL_IP" >> $GITHUB_ENV
           fi
 
-      - name: 6. Connection Information and Keep Alive
+      - name: 6. Final Information
         run: |
-          echo "Thanks to MR.English2008 for this perfect work"
-          echo "=== CONNECTION INFORMATION ==="
+          echo "Thanks to MR.English2008"
           echo "Connection Type: ${{ env.CONNECTION_TYPE }}"
-          echo "Program Selected: ${{ github.event.inputs.connection_program }}"
-          
-          CONNECTION_IP="${{ env.CONNECTION_IP }}"
-          if [ "${{ env.CONNECTION_TYPE }}" = "Tailscale" ]; then
-            echo ">>> RDP Connection: $CONNECTION_IP:3389"
-            echo ">>> VNC Connection: $CONNECTION_IP:5900"
-          else
-            echo ">>> Address: $CONNECTION_IP"
-          fi
-          
-          echo "NOTE: If you connect with RDP/VNC, use Connect_VNC.sh inside VM to open display."
+          echo "Address: ${{ env.CONNECTION_IP }}"
           sleep 21600
