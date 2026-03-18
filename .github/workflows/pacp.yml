@@ -1,4 +1,4 @@
-name: QEMU Ultimate Bridge VM
+name: QEMU Ultimate Bridge VM (Bore Optimized)
 on:
   workflow_dispatch:
     inputs:
@@ -11,17 +11,13 @@ on:
         required: true
         default: 'MR.English2008'
       connection_method:
-        description: 'Connection Method (tailscale/ngrok/bore)'
+        description: 'Connection Method'
         required: true
-        default: 'ngrok'
+        default: 'bore'
       connection_program:
         description: 'Connection Program (RDP/VNC/NoMachine)'
         required: true
         default: 'VNC'
-      boot_mode:
-        description: 'Boot Mode (iso/qcow2)'
-        required: true
-        default: 'qcow2'
       vcpus:
         description: 'CPU Cores'
         required: true
@@ -46,84 +42,52 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 1. Setup Network Bridge & Dependencies
+      - name: 1. Install Dependencies & Bridge
         run: |
-          sudo rm -rf /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock
           sudo apt-get update -y
-          
-          # تم حذف tunctl وإضافة qemu-system-gui لضمان وجود كل المكتبات
           sudo apt-get install -y --no-install-recommends \
             qemu-system-x86 ovmf novnc websockify wget curl \
             unzip p7zip-full unrar-free tar python3-pip bridge-utils netcat-openbsd \
-            jq tigervnc-viewer wmctrl internetarchive genisoimage openssh-server autossh ufw
+            jq tigervnc-viewer wmctrl genisoimage openssh-server ufw
           
-          # Bridge Logic
+          # إعداد الجسر والـ TAP
           sudo brctl addbr br0
           sudo ip addr add 192.168.1.100/24 dev br0
           sudo ip link set br0 up
-          
-          # إنشاء TAP باستخدام أمر ip بدلاً من tunctl المتوفى
           sudo ip tuntap add dev tap0 mode tap
           sudo brctl addif br0 tap0
           sudo ip link set tap0 up
-          
-          # Firewall Setup
-          sudo ufw allow 5900/tcp
-          sudo ufw allow 3389/tcp
-          sudo ufw allow 4000/tcp
-          sudo ufw --force enable || true
 
-      - name: 2. Setup Connection Method
+      - name: 2. Enable Internet Routing (NAT)
         run: |
-          METHOD="${{ github.event.inputs.connection_method }}"
-          if [ "$METHOD" = "tailscale" ]; then
-            curl -fsSL https://tailscale.com/install.sh | sudo sh
-            sudo tailscale up --authkey "${{ secrets.TAILSCALE_AUTHKEY }}" --hostname "gh-vm-${{ github.run_id }}" --accept-routes --accept-dns=false
-            echo "CONNECTION_IP=$(sudo tailscale ip -4 | head -n1)" >> $GITHUB_ENV
-            echo "CONNECTION_TYPE=Tailscale" >> $GITHUB_ENV
-          elif [ "$METHOD" = "ngrok" ]; then
-            wget -q https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.zip
-            unzip -o ngrok-v3-stable-linux-amd64.zip && sudo mv ngrok /usr/local/bin/
-            ngrok config add-authtoken "${{ secrets.NGROK_AUTH }}"
-            echo "CONNECTION_TYPE=Ngrok" >> $GITHUB_ENV
-          elif [ "$METHOD" = "bore" ]; then
-            curl -L https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz | tar zx
-            sudo mv bore /usr/local/bin/
-            echo "CONNECTION_TYPE=Bore" >> $GITHUB_ENV
-          fi
+          # تفعيل تمرير البيانات لضمان وصول الإنترنت للـ VM
+          sudo sysctl -w net.ipv4.ip_forward=1
+          sudo iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+          sudo iptables -A FORWARD -i br0 -o eth0 -j ACCEPT
+          sudo iptables -A FORWARD -i eth0 -o br0 -m state --state RELATED,ESTABLISHED -j ACCEPT
 
-      - name: 3. Download & Extract VM Image
+      - name: 3. Setup Bore Tunnel
+        run: |
+          curl -L https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz | tar zx
+          sudo mv bore /usr/local/bin/
+          echo "CONNECTION_TYPE=Bore" >> $GITHUB_ENV
+
+      - name: 4. Download VM Image
         run: |
           SRC="${{ env.FINAL_SOURCE_URL }}"
           VM="${{ github.event.inputs.vm_name }}"
-          TEMP_PATH="/mnt/tmp_unpack"
-          FILE_PATH="$TEMP_PATH/source_file"
-          sudo mkdir -p "$TEMP_PATH"
-          
+          sudo mkdir -p /mnt/tmp_unpack
           git clone https://github.com/stck-lzm/badown ~/badown
           chmod +x ~/badown/badown
-          
-          if [[ "$SRC" == *"mediafire.com"* || "$SRC" == *"mega.nz"* ]]; then
-            cd ~/badown
-            sudo ./badown "$SRC" > /tmp/badown.log 2>&1 &
-            pid=$!
-            while kill -0 $pid 2>/dev/null; do sleep 15; echo "Downloading..."; done
-            wait $pid
-            sudo mv $(ls -t | head -n1) "$FILE_PATH"
-          fi
-          
-          EXT=$(file -b --mime-type "$FILE_PATH")
-          if [[ "$EXT" == *"iso"* ]]; then
-            sudo mv "$FILE_PATH" "$HOME/${VM}.iso"
-            sudo qemu-img create -f qcow2 "/mnt/${VM}.qcow2" "${DISK}G"
-          else
-            cd "$TEMP_PATH"
-            if [[ "$EXT" == *"7z"* ]]; then sudo 7z x -y "$FILE_PATH"; fi
-            FOUND=$(find "$TEMP_PATH" -type f \( -iname "*.qcow2" -o -iname "*.img" \) | head -n 1)
-            sudo mv "$FOUND" "/mnt/${VM}.qcow2"
-          fi
+          cd ~/badown && sudo ./badown "$SRC" > /tmp/badown.log 2>&1 &
+          pid=$!
+          while kill -0 $pid 2>/dev/null; do sleep 15; echo "Downloading..."; done
+          sudo mv $(ls -t | head -n1) /mnt/tmp_unpack/source_file
+          cd /mnt/tmp_unpack && sudo 7z x -y source_file
+          FOUND=$(find . -type f \( -iname "*.qcow2" -o -iname "*.img" \) | head -n 1)
+          sudo mv "$FOUND" "/mnt/${VM}.qcow2"
 
-      - name: 4. Launch QEMU VM
+      - name: 5. Launch QEMU VM
         run: |
           VM="${{ github.event.inputs.vm_name }}"
           VNC_PASS="${{ github.event.inputs.vnc_password }}"
@@ -132,35 +96,32 @@ jobs:
             -hda "/mnt/${VM}.qcow2" -boot c -vnc :0,password=on \
             -monitor tcp:localhost:4444,server,nowait -display none \
             -netdev tap,id=net0,ifname=tap0,script=no,downscript=no \
-            -device virtio-net-pci,netdev=net0 -device usb-ehci,id=ehci -device usb-tablet,bus=ehci.0 &
+            -device virtio-net-pci,netdev=net0 \
+            -device usb-ehci,id=ehci -device usb-tablet,bus=ehci.0 &
           
           while ! nc -z localhost 4444; do sleep 2; done
           echo "change vnc password $VNC_PASS" | nc -q 1 localhost 4444
 
-      - name: 5. Expose Selected Port with Tunnel
-        if: always()
+      - name: 6. Start Bore Tunnel
         run: |
-          METHOD="${{ github.event.inputs.connection_method }}"
           PROGRAM="${{ github.event.inputs.connection_program }}"
           PORT=5900
           [ "$PROGRAM" = "RDP" ] && PORT=3389
           [ "$PROGRAM" = "NoMachine" ] && PORT=4000
           
-          if [ "$METHOD" = "ngrok" ]; then
-            nohup ngrok tcp $PORT --region=eu > /dev/null 2>&1 &
-            sleep 15
-            TUNNEL_URL=$(curl --silent http://127.0.0.1:4040/api/tunnels | jq -r ".tunnels[0].public_url")
-            echo "CONNECTION_IP=$TUNNEL_URL" >> $GITHUB_ENV
-          elif [ "$METHOD" = "bore" ]; then
-            nohup bore local $PORT --to bore.pub > /tmp/bore.log 2>&1 &
-            sleep 10
-            TUNNEL_IP=$(grep -Eo 'bore.pub:[0-9]+' /tmp/bore.log | tail -n 1)
-            echo "CONNECTION_IP=$TUNNEL_IP" >> $GITHUB_ENV
-          fi
+          nohup bore local $PORT --to bore.pub > /tmp/bore.log 2>&1 &
+          sleep 10
+          TUNNEL_IP=$(grep -Eo 'bore.pub:[0-9]+' /tmp/bore.log | tail -n 1)
+          echo "CONNECTION_IP=$TUNNEL_IP" >> $GITHUB_ENV
 
-      - name: 6. Final Information
+      - name: 7. Final Info & Keep Alive
         run: |
           echo "Thanks to MR.English2008"
-          echo "Connection Type: ${{ env.CONNECTION_TYPE }}"
+          echo "Connection Type: Bore"
           echo "Address: ${{ env.CONNECTION_IP }}"
+          echo "--- NETWORK SETUP COMMANDS FOR VM ---"
+          echo "sudo ip addr add 192.168.1.10/24 dev ens3"
+          echo "sudo ip link set ens3 up"
+          echo "sudo ip route add default via 192.168.1.100"
+          echo "echo 'nameserver 8.8.8.8' | sudo tee /etc/resolv.conf"
           sleep 21600
