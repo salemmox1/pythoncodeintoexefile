@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version_tag:
-        description: 'Version Tag (e.g., v1.1.0)'
+        description: 'Version Tag'
         required: true
         default: 'v1.1.0'
 
@@ -18,53 +18,45 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 1. تحميل الـ Artifact اللي لسه مبني (مهم جداً)
-      - name: Download Build Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: RDP-ARMOUR-MAX-EXE
-          path: ./downloaded_build
+      # 1. التحميل المباشر باستخدام curl من الرابط اللي معاك
+      - name: Download Artifact Direct
+        shell: pwsh
+        run: |
+          # الرابط اللي أنت ادتهوني من Run #9
+          $url = "https://github.com/salemmox1/pythoncodeintoexefile/actions/runs/23713217647/artifacts/6166860719"
+          
+          Write-Host ">>> Downloading from: $url"
+          # استخدام curl لتحميل ملف الـ Zip
+          curl -L -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" $url -o build.zip
 
-      # 2. فك الضغط وإعادة التسمية
+      # 2. فك الضغط وإعادة التسمية (بدون تعقيد)
       - name: Extract and Rename
         shell: pwsh
         run: |
-          # البحث عن ملف الـ EXE جوه المجلد اللي نزل
-          $exe_file = Get-ChildItem -Path ./downloaded_build -Filter *.exe -Recurse | Select-Object -First 1
+          # فك ضغط الملف اللي حملناه
+          Expand-Archive -Path build.zip -DestinationPath ./out -Force
           
-          if ($exe_file) {
-              Write-Host ">>> Found EXE: $($exe_file.FullName)"
-              # نسخ الملف للمجلد الرئيسي بالاسم الجديد المطلوب
-              Copy-Item $exe_file.FullName "./RDP_ARMOUR.exe" -Force
-              Write-Host ">>> Renamed to RDP_ARMOUR.exe"
+          # تدوير على الـ EXE وتسميته الاسم الجديد
+          $exe = Get-ChildItem -Path ./out -Filter *.exe -Recurse | Select-Object -First 1
+          if ($exe) {
+              Copy-Item $exe.FullName "./RDP_ARMOUR.exe" -Force
+              Write-Host ">>> Success: RDP_ARMOUR.exe is ready."
           } else {
-              Write-Error "Could not find any EXE in artifact!"
+              Write-Error "EXE not found in zip!"
               exit 1
           }
 
-      # 3. إنشاء الريليس ورفع الملف النهائي
-      - name: Create GitHub Release
-        id: create_release
+      # 3. الرفع في الريليس
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.version_tag }}
           name: "RDP-ARMOUR Engine ${{ github.event.inputs.version_tag }}"
           body: |
-            ## 🛡️ RDP-ARMOUR Professional Deployment Engine
-            
-            ### 📝 Status:
-            - **Build Status:** Success ✅
-            - **Protection:** PyArmor Encrypted 🔒
-            - **Deployment:** Ready for C:\ MAX Root
-            
-            ### 🚀 Highlights:
-            - Auto-Renamed to **RDP_ARMOUR.exe**
-            - Silent Background Service Enabled.
-            - Telegram Live Uptime Reporting.
+            ## 🛡️ RDP-ARMOUR Official Build
+            - **Name:** RDP_ARMOUR.exe
+            - **Status:** Final & Protected
           files: |
             RDP_ARMOUR.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Final Notification
-        run: echo ">>> RDP-ARMOUR is now LIVE in the Release section!"
