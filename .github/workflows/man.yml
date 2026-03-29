@@ -1,10 +1,10 @@
-name: "RDP-ARMOUR EXE Builder"
+name: "RDP-ARMOUR MAX EXE"
 
 on:
   workflow_dispatch:
     inputs:
       folder_name:
-        description: 'Folder name'
+        description: 'Folder Name'
         required: true
         default: '.'
 
@@ -25,31 +25,40 @@ jobs:
         run: |
           pip install pyinstaller pyarmor requests cryptography
 
-      - name: Protect and Compile
+      - name: Final Build Engine
         shell: pwsh
         run: |
-          # 1. التشفير العادي في المجلد الحالي
-          $py_file = "Master_Loader.py"
-          
-          if (-not (Test-Path $py_file)) {
-              $py_file = Get-ChildItem -Filter *.py | Select-Object -First 1
+          # 1. تحديد مكان المجلد والدخول إليه
+          $folder = "${{ github.event.inputs.folder_name }}"
+          if ($folder -ne ".") { cd $folder }
+
+          # 2. البحث عن الملف والتأكد من وجوده
+          $target = Get-ChildItem -Filter *.py | Select-Object -First 1
+          if (-not $target) {
+              Write-Error "CRITICAL: No Python file found in $folder"
+              exit 1
+          }
+          $script_name = $target.Name
+          Write-Host ">>> Target Found: $script_name"
+
+          # 3. التشفير (PyArmor)
+          # بنستخدم جينيريت مباشر للملف
+          pyarmor gen --private "$script_name"
+
+          # 4. التحقق من وجود مجلد dist قبل النقل
+          if (-not (Test-Path "dist")) {
+              Write-Error "PyArmor failed to create dist folder!"
+              exit 1
           }
 
-          Write-Host ">>> Processing: $($py_file)"
-
-          # تشفير بسيط (Obfuscation)
-          pyarmor gen $py_file
-
-          # 2. نقل ملف التشفير للمجلد الرئيسي عشان PyInstaller يشوفه
-          Copy-Item "dist/$py_file" "./protected_$py_file" -Force
-          Copy-Item -Recurse "dist/pyarmor_runtime_*" "./" -ErrorAction SilentlyContinue
-
-          # 3. البناء النهائي (بدون أيقونات وبدون تعقيد)
-          # -F يعني OneFile و -w يعني Hidden (No Console)
-          pyinstaller --onefile --windowed --name "RDP_ARMOUR" "protected_$py_file"
+          # 5. البناء النهائي باستخدام PyInstaller
+          # بنبني من داخل مجلد dist لضمان سحب الـ runtime
+          cd dist
+          pyinstaller --onefile --windowed --name "RDP_ARMOUR_MAX" "$script_name"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RDP-ARMOUR-EXE
-          path: dist/*.exe
+          name: RDP-ARMOUR-MAX-EXE
+          path: |
+            **/dist/dist/*.exe
