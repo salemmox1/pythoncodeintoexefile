@@ -1,98 +1,70 @@
-name: Avica OCR Automation
+name: "RDP-ARMOUR EXE Builder"
 
 on:
   workflow_dispatch:
+    inputs:
+      folder_name:
+        description: 'Folder name containing your script'
+        required: true
+        default: '.' # الوضع الافتراضي هو المجلد الرئيسي
 
 jobs:
-  run-ocr:
+  build:
     runs-on: windows-latest
 
     steps:
-      - name: Install Tailscale
-        run: |
-          pip install requests
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.92.3-amd64.msi"
-          $installerPath = "$env:TEMP\tailscale.msi"
-          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
-          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
-          Remove-Item $installerPath -Force
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-      - name: Establish Tailscale Connection
-        run: |
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTHKEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
-          $tsIP = $null
-          $retries = 0
-          while (-not $tsIP -and $retries -lt 10) {
-              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-              Start-Sleep -Seconds 5
-              $retries++
-          }
-          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10' # نسخة مستقرة للتحويل
 
-      - name: Download and Start Avica
+      - name: Install Dependencies
         run: |
-          curl.exe -s -L -o AvicaLite.exe https://download.avica.com/AvicaLite_v8.0.8.9.exe
-          Start-Process -FilePath ".\AvicaLite.exe"
+          python -m pip install --upgrade pip
+          pip install pyinstaller pyarmor requests cryptography
 
-      - name: Capture Screenshot
-        shell: powershell
+      - name: Protect and Compile
+        shell: pwsh
         run: |
-          Start-Sleep -s 25
-          $process = Get-Process -Name "AvicaLite" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($process) {
-              Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-              $Screen = [System.Windows.Forms.Screen]::PrimaryScreen
-              $Bitmap = New-Object System.Drawing.Bitmap($Screen.Bounds.Width, $Screen.Bounds.Height)
-              $Graphics = [System.Drawing.Graphics]::FromImage($Bitmap)
-              $Graphics.CopyFromScreen($Screen.Bounds.X, $Screen.Bounds.Y, 0, 0, $Bitmap.Size)
-              $Bitmap.Save("$env:USERPROFILE\Desktop\pic.png", [System.Drawing.Imaging.ImageFormat]::Png)
+          $dir = "${{ github.event.inputs.folder_name }}"
+          if ($dir -ne ".") { cd $dir }
+
+          # البحث عن ملف السكربت (يفضل تسميته Master_Loader.py)
+          $py_file = Get-ChildItem -Filter *.py | Where-Object { $_.Name -like "*Loader*" }
+          if (-not $py_file) {
+              $py_file = Get-ChildItem -Filter *.py | Select-Object -First 1
           }
 
-      - name: Upload screenshot immediately (Imgur)
-        shell: python
-        run: |
-          import requests, os, sys
+          if (-not $py_file) {
+              Write-Error "No Python script found to build!"
+              exit 1
+          }
 
-          IMGUR_TOKEN = "0205418ed7afc732fb798302849561a71c82b7a4"
-          IMG_PATH = os.path.join(os.environ.get("USERPROFILE",""), "Desktop", "pic.png")
+          Write-Host ">>> Protecting: $($py_file.Name) with PyArmor"
+          
+          # حماية الكود باستخدام PyArmor
+          pyarmor gen --private $($py_file.Name)
 
-          if not os.path.exists(IMG_PATH):
-              sys.exit("NO_IMAGE")
+          Write-Host ">>> Compiling to EXE with PyInstaller"
+          
+          # البحث عن أيقونة لو وجدت
+          $icon_param = ""
+          $icon_file = Get-ChildItem -Filter *.ico | Select-Object -First 1
+          if ($icon_file) {
+              $icon_param = "--icon=$($icon_file.Name)"
+              Write-Host ">>> Using Icon: $($icon_file.Name)"
+          }
 
-          url = "https://api.imgur.com/3/image"
-          headers = {"Authorization": f"Bearer {IMGUR_TOKEN}"}
+          # البناء النهائي (بدون كونسول + ملف واحد)
+          # ملاحظة: تم إضافة --noconsole لجعل الـ EXE مخفي
+          pyinstaller --onefile --noconsole $icon_param --name "RDP_ARMOUR_v1" "$($py_file.Name)"
 
-          with open(IMG_PATH, "rb") as f:
-              r = requests.post(url, headers=headers, files={"image": f})
-
-          if r.status_code == 200:
-              print(r.json()["data"]["link"])
-          else:
-              sys.exit("UPLOAD_FAILED")
-
-      - name: Run OCR Script
-        id: ocr_engine
-        shell: powershell
-        run: |
-          curl.exe -s -L -o screenshot.py https://gitlab.com/MR.English2008/avica/-/raw/main/OCR_Avica.py
-          $env:PYTHONWARNINGS="ignore"
-          cmd /c "python screenshot.py > nul 2>&1"
-
-      - name: Upload screenshot as artifact
+      - name: Upload Protected EXE
         uses: actions/upload-artifact@v4
         with:
-          name: ocr-screenshot
-          path: ${{ env.USERPROFILE }}\Desktop\pic.png
-
-      - name: Use Extracted Variables
-        shell: powershell
-        run: |
-          Write-Host "Thanks to MR.English2008 for this perfect work"
-          Write-Host "follow for more in my telegram channel"
-          Write-Host "https://t.me/ME2008_RDP"
-          Write-Host ""
-          Write-Host "=== AVICA ACCESS ==="
-          Write-Host "Avica ID:   ${{ steps.ocr_engine.outputs.id }}"
-          Write-Host "Avica Pass: ${{ steps.ocr_engine.outputs.pass }}"
-          Write-Host "=================="
-          Start-Sleep -Seconds 21600
+          name: ${{ github.event.inputs.folder_name }}-Protected-EXE
+          path: |
+            **/dist/*.exe
