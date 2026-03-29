@@ -1,52 +1,48 @@
-name: "RDP-ARMOUR Release Build"
+name: "RDP-ARMOUR Final Release"
 
 on:
   workflow_dispatch:
     inputs:
       version_tag:
-        description: 'Version Tag (e.g., v1.0.0)'
+        description: 'Version Tag (e.g., v1.1.0)'
         required: true
-        default: 'v1.0.0'
+        default: 'v1.1.0'
 
 jobs:
-  build-and-release:
+  release:
     runs-on: windows-latest
     permissions:
-      contents: write # ضروري عشان يقدر يعمل ريليس ويرفع ملفات
+      contents: write
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      # 1. تحميل الـ Artifact اللي لسه مبني (مهم جداً)
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v4
         with:
-          python-version: '3.10'
+          name: RDP-ARMOUR-MAX-EXE
+          path: ./downloaded_build
 
-      - name: Install Dependencies
-        run: |
-          pip install pyinstaller pyarmor requests cryptography
-
-      - name: Protect and Build EXE
+      # 2. فك الضغط وإعادة التسمية
+      - name: Extract and Rename
         shell: pwsh
         run: |
-          # البحث عن السكربت الرئيسي
-          $target = Get-ChildItem -Filter *.py | Select-Object -First 1
-          if (-not $target) { exit 1 }
-          $script_name = $target.Name
+          # البحث عن ملف الـ EXE جوه المجلد اللي نزل
+          $exe_file = Get-ChildItem -Path ./downloaded_build -Filter *.exe -Recurse | Select-Object -First 1
           
-          # 1. التشفير (PyArmor)
-          pyarmor gen --private "$script_name"
-
-          # 2. البناء (PyInstaller) من داخل مجلد التشفير
-          cd dist
-          pyinstaller --onefile --windowed --name "RDP_ARMOUR" "$script_name"
-          
-          # التأكد من وجود الملف وتغيير مكانه للسهولة
-          if (Test-Path "dist\RDP_ARMOUR.exe") {
-              Move-Item "dist\RDP_ARMOUR.exe" "../../RDP_ARMOUR.exe" -Force
+          if ($exe_file) {
+              Write-Host ">>> Found EXE: $($exe_file.FullName)"
+              # نسخ الملف للمجلد الرئيسي بالاسم الجديد المطلوب
+              Copy-Item $exe_file.FullName "./RDP_ARMOUR.exe" -Force
+              Write-Host ">>> Renamed to RDP_ARMOUR.exe"
+          } else {
+              Write-Error "Could not find any EXE in artifact!"
+              exit 1
           }
 
+      # 3. إنشاء الريليس ورفع الملف النهائي
       - name: Create GitHub Release
         id: create_release
         uses: softprops/action-gh-release@v2
@@ -56,23 +52,19 @@ jobs:
           body: |
             ## 🛡️ RDP-ARMOUR Professional Deployment Engine
             
-            ### 📝 Description:
-            This is a highly protected and encrypted execution engine developed by **MR.English2008**. 
-            It is designed for secure system administration and remote deployment.
+            ### 📝 Status:
+            - **Build Status:** Success ✅
+            - **Protection:** PyArmor Encrypted 🔒
+            - **Deployment:** Ready for C:\ MAX Root
             
-            ### 🚀 Features:
-            - **In-Memory Decryption:** Payloads are never written to disk in plain text.
-            - **Stealth Execution:** Runs as a hidden background service.
-            - **Multi-Tool Support:** Seamless integration with RDP, RustDesk, and AnyDesk.
-            - **Live Reporting:** Real-time uptime monitoring via Telegram.
-            
-            ### ⚠️ Usage:
-            - Run the EXE with Administrator privileges for full deployment capability.
-            - Ensure environment variables are set correctly in your workflow.
+            ### 🚀 Highlights:
+            - Auto-Renamed to **RDP_ARMOUR.exe**
+            - Silent Background Service Enabled.
+            - Telegram Live Uptime Reporting.
           files: |
             RDP_ARMOUR.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Deployment Success
-        run: echo ">>> RDP_ARMOUR Released Successfully!"
+      - name: Final Notification
+        run: echo ">>> RDP-ARMOUR is now LIVE in the Release section!"
