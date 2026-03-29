@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       folder_name:
-        description: 'Folder name containing your script'
+        description: 'Folder name'
         required: true
-        default: '.' # الوضع الافتراضي هو المجلد الرئيسي
+        default: '.'
 
 jobs:
   build:
@@ -19,52 +19,46 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10' # نسخة مستقرة للتحويل
+          python-version: '3.10'
 
       - name: Install Dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install pyinstaller pyarmor requests cryptography
 
       - name: Protect and Compile
         shell: pwsh
         run: |
-          $dir = "${{ github.event.inputs.folder_name }}"
-          if ($dir -ne ".") { cd $dir }
-
-          # البحث عن ملف السكربت (يفضل تسميته Master_Loader.py)
-          $py_file = Get-ChildItem -Filter *.py | Where-Object { $_.Name -like "*Loader*" }
-          if (-not $py_file) {
-              $py_file = Get-ChildItem -Filter *.py | Select-Object -First 1
+          # 1. الدخول للمجلد
+          if ("${{ github.event.inputs.folder_name }}" -ne ".") { 
+              cd "${{ github.event.inputs.folder_name }}" 
           }
 
-          if (-not $py_file) {
-              Write-Error "No Python script found to build!"
-              exit 1
-          }
-
-          Write-Host ">>> Protecting: $($py_file.Name) with PyArmor"
+          # 2. تحديد الملف (Master_Loader.py)
+          $py_file = Get-ChildItem -Filter *.py | Where-Object { $_.Name -like "*Loader*" } | Select-Object -First 1
+          if (-not $py_file) { $py_file = Get-ChildItem -Filter *.py | Select-Object -First 1 }
           
-          # حماية الكود باستخدام PyArmor
+          Write-Host ">>> Selected Script: $($py_file.Name)"
+
+          # 3. تشفير الكود (بينتج مجلد اسمه dist جواه الكود المشفر)
           pyarmor gen --private $($py_file.Name)
 
-          Write-Host ">>> Compiling to EXE with PyInstaller"
-          
-          # البحث عن أيقونة لو وجدت
+          # 4. الدخول لمجلد التشفير للبناء من داخله
+          cd dist
+
+          # 5. تحديد الأيقونة لو موجودة (نرجع خطوة لورا عشان نشوفها)
           $icon_param = ""
-          $icon_file = Get-ChildItem -Filter *.ico | Select-Object -First 1
+          $icon_file = Get-ChildItem -Path .. -Filter *.ico | Select-Object -First 1
           if ($icon_file) {
-              $icon_param = "--icon=$($icon_file.Name)"
-              Write-Host ">>> Using Icon: $($icon_file.Name)"
+              $icon_param = "--icon=`"../$($icon_file.Name)`""
           }
 
-          # البناء النهائي (بدون كونسول + ملف واحد)
-          # ملاحظة: تم إضافة --noconsole لجعل الـ EXE مخفي
+          # 6. البناء النهائي من داخل مجلد التشفير
+          # استخدمنا --collect-all لضمان سحب كل ملفات الـ runtime الخاصة بـ pyarmor
           pyinstaller --onefile --noconsole $icon_param --name "RDP_ARMOUR_v1" "$($py_file.Name)"
 
       - name: Upload Protected EXE
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ github.event.inputs.folder_name }}-Protected-EXE
+          name: RDP-ARMOUR-v1-EXE
           path: |
-            **/dist/*.exe
+            **/dist/dist/*.exe
