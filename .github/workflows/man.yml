@@ -18,35 +18,31 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 1. التحميل المباشر باستخدام curl من الرابط اللي معاك
-      - name: Download Artifact Direct
+      # 1. التحميل المباشر بالـ Token
+      - name: Download Artifact
         shell: pwsh
         run: |
-          # الرابط اللي أنت ادتهوني من Run #9
           $url = "https://github.com/salemmox1/pythoncodeintoexefile/actions/runs/23713217647/artifacts/6166860719"
-          
-          Write-Host ">>> Downloading from: $url"
-          # استخدام curl لتحميل ملف الـ Zip
           curl -L -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" $url -o build.zip
 
-      # 2. فك الضغط وإعادة التسمية (بدون تعقيد)
-      - name: Extract and Rename
+      # 2. فك الضغط بـ 7-Zip (أقوى وأضمن)
+      - name: Extract with 7-Zip
         shell: pwsh
         run: |
-          # فك ضغط الملف اللي حملناه
-          Expand-Archive -Path build.zip -DestinationPath ./out -Force
+          # فك الضغط في مجلد اسمه out
+          7z x build.zip -o./out -y
           
-          # تدوير على الـ EXE وتسميته الاسم الجديد
+          # تدوير على الـ EXE وتسميته
           $exe = Get-ChildItem -Path ./out -Filter *.exe -Recurse | Select-Object -First 1
           if ($exe) {
               Copy-Item $exe.FullName "./RDP_ARMOUR.exe" -Force
-              Write-Host ">>> Success: RDP_ARMOUR.exe is ready."
+              Write-Host ">>> RDP_ARMOUR.exe is READY"
           } else {
-              Write-Error "EXE not found in zip!"
+              Write-Error "EXE not found inside the zip!"
               exit 1
           }
 
-      # 3. الرفع في الريليس
+      # 3. الرفع النهائي للريليس
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -54,8 +50,9 @@ jobs:
           name: "RDP-ARMOUR Engine ${{ github.event.inputs.version_tag }}"
           body: |
             ## 🛡️ RDP-ARMOUR Official Build
-            - **Name:** RDP_ARMOUR.exe
-            - **Status:** Final & Protected
+            - **File:** RDP_ARMOUR.exe
+            - **Build ID:** 6166860719
+            - **Status:** Final & Protected ✅
           files: |
             RDP_ARMOUR.exe
         env:
