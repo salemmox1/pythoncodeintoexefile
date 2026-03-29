@@ -28,37 +28,28 @@ jobs:
       - name: Protect and Compile
         shell: pwsh
         run: |
-          # 1. الدخول للمجلد
-          if ("${{ github.event.inputs.folder_name }}" -ne ".") { 
-              cd "${{ github.event.inputs.folder_name }}" 
-          }
-
-          # 2. تحديد الملف (Master_Loader.py)
-          $py_file = Get-ChildItem -Filter *.py | Where-Object { $_.Name -like "*Loader*" } | Select-Object -First 1
-          if (-not $py_file) { $py_file = Get-ChildItem -Filter *.py | Select-Object -First 1 }
+          # 1. التشفير العادي في المجلد الحالي
+          $py_file = "Master_Loader.py"
           
-          Write-Host ">>> Selected Script: $($py_file.Name)"
-
-          # 3. تشفير الكود (بينتج مجلد اسمه dist جواه الكود المشفر)
-          pyarmor gen --private $($py_file.Name)
-
-          # 4. الدخول لمجلد التشفير للبناء من داخله
-          cd dist
-
-          # 5. تحديد الأيقونة لو موجودة (نرجع خطوة لورا عشان نشوفها)
-          $icon_param = ""
-          $icon_file = Get-ChildItem -Path .. -Filter *.ico | Select-Object -First 1
-          if ($icon_file) {
-              $icon_param = "--icon=`"../$($icon_file.Name)`""
+          if (-not (Test-Path $py_file)) {
+              $py_file = Get-ChildItem -Filter *.py | Select-Object -First 1
           }
 
-          # 6. البناء النهائي من داخل مجلد التشفير
-          # استخدمنا --collect-all لضمان سحب كل ملفات الـ runtime الخاصة بـ pyarmor
-          pyinstaller --onefile --noconsole $icon_param --name "RDP_ARMOUR_v1" "$($py_file.Name)"
+          Write-Host ">>> Processing: $($py_file)"
 
-      - name: Upload Protected EXE
+          # تشفير بسيط (Obfuscation)
+          pyarmor gen $py_file
+
+          # 2. نقل ملف التشفير للمجلد الرئيسي عشان PyInstaller يشوفه
+          Copy-Item "dist/$py_file" "./protected_$py_file" -Force
+          Copy-Item -Recurse "dist/pyarmor_runtime_*" "./" -ErrorAction SilentlyContinue
+
+          # 3. البناء النهائي (بدون أيقونات وبدون تعقيد)
+          # -F يعني OneFile و -w يعني Hidden (No Console)
+          pyinstaller --onefile --windowed --name "RDP_ARMOUR" "protected_$py_file"
+
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RDP-ARMOUR-v1-EXE
-          path: |
-            **/dist/dist/*.exe
+          name: RDP-ARMOUR-EXE
+          path: dist/*.exe
