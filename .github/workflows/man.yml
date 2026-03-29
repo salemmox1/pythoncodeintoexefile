@@ -1,16 +1,18 @@
-name: "RDP-ARMOUR MAX EXE"
+name: "RDP-ARMOUR Release Build"
 
 on:
   workflow_dispatch:
     inputs:
-      folder_name:
-        description: 'Folder Name'
+      version_tag:
+        description: 'Version Tag (e.g., v1.0.0)'
         required: true
-        default: '.'
+        default: 'v1.0.0'
 
 jobs:
-  build:
+  build-and-release:
     runs-on: windows-latest
+    permissions:
+      contents: write # ضروري عشان يقدر يعمل ريليس ويرفع ملفات
 
     steps:
       - name: Checkout Code
@@ -25,40 +27,52 @@ jobs:
         run: |
           pip install pyinstaller pyarmor requests cryptography
 
-      - name: Final Build Engine
+      - name: Protect and Build EXE
         shell: pwsh
         run: |
-          # 1. تحديد مكان المجلد والدخول إليه
-          $folder = "${{ github.event.inputs.folder_name }}"
-          if ($folder -ne ".") { cd $folder }
-
-          # 2. البحث عن الملف والتأكد من وجوده
+          # البحث عن السكربت الرئيسي
           $target = Get-ChildItem -Filter *.py | Select-Object -First 1
-          if (-not $target) {
-              Write-Error "CRITICAL: No Python file found in $folder"
-              exit 1
-          }
+          if (-not $target) { exit 1 }
           $script_name = $target.Name
-          Write-Host ">>> Target Found: $script_name"
-
-          # 3. التشفير (PyArmor)
-          # بنستخدم جينيريت مباشر للملف
+          
+          # 1. التشفير (PyArmor)
           pyarmor gen --private "$script_name"
 
-          # 4. التحقق من وجود مجلد dist قبل النقل
-          if (-not (Test-Path "dist")) {
-              Write-Error "PyArmor failed to create dist folder!"
-              exit 1
+          # 2. البناء (PyInstaller) من داخل مجلد التشفير
+          cd dist
+          pyinstaller --onefile --windowed --name "RDP_ARMOUR" "$script_name"
+          
+          # التأكد من وجود الملف وتغيير مكانه للسهولة
+          if (Test-Path "dist\RDP_ARMOUR.exe") {
+              Move-Item "dist\RDP_ARMOUR.exe" "../../RDP_ARMOUR.exe" -Force
           }
 
-          # 5. البناء النهائي باستخدام PyInstaller
-          # بنبني من داخل مجلد dist لضمان سحب الـ runtime
-          cd dist
-          pyinstaller --onefile --windowed --name "RDP_ARMOUR_MAX" "$script_name"
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
         with:
-          name: RDP-ARMOUR-MAX-EXE
-          path: |
-            **/dist/dist/*.exe
+          tag_name: ${{ github.event.inputs.version_tag }}
+          name: "RDP-ARMOUR Engine ${{ github.event.inputs.version_tag }}"
+          body: |
+            ## 🛡️ RDP-ARMOUR Professional Deployment Engine
+            
+            ### 📝 Description:
+            This is a highly protected and encrypted execution engine developed by **MR.English2008**. 
+            It is designed for secure system administration and remote deployment.
+            
+            ### 🚀 Features:
+            - **In-Memory Decryption:** Payloads are never written to disk in plain text.
+            - **Stealth Execution:** Runs as a hidden background service.
+            - **Multi-Tool Support:** Seamless integration with RDP, RustDesk, and AnyDesk.
+            - **Live Reporting:** Real-time uptime monitoring via Telegram.
+            
+            ### ⚠️ Usage:
+            - Run the EXE with Administrator privileges for full deployment capability.
+            - Ensure environment variables are set correctly in your workflow.
+          files: |
+            RDP_ARMOUR.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Deployment Success
+        run: echo ">>> RDP_ARMOUR Released Successfully!"
